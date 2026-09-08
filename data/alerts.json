@@ -1,0 +1,106 @@
+{
+  "alerts": [
+    {
+      "code": "METRO",
+      "name": "METRO Sanayi ve Ticaret A.Ş.",
+      "type": "stock",
+      "targetPrice": 7.6501,
+      "condition": "below",
+      "initialPrice": 8.95,
+      "currentPrice": 8.71,
+      "active": true,
+      "frequency": "persistent",
+      "note": "",
+      "id": "alt_1787753739050_f822o",
+      "createdAt": "2026-08-26T14:15:39.050Z",
+      "triggered": false,
+      "lastEvaluatedPrice": 8.71
+    },
+    {
+      "code": "BIMAS",
+      "name": "BİM Birleşik Mağazalar A.Ş.",
+      "type": "stock",
+      "targetPrice": 370.9701,
+      "condition": "below",
+      "initialPrice": 419.75,
+      "currentPrice": 492.5,
+      "active": true,
+      "frequency": "persistent",
+      "note": "",
+      "id": "alt_1787753640535_v7ans",
+      "createdAt": "2026-08-26T14:14:00.535Z",
+      "triggered": false,
+      "lastEvaluatedPrice": 492.5
+    },
+    {
+      "id": "alt-thyao-1",
+      "code": "MGROS",
+      "name": "Migros Ticaret A.S.",
+      "type": "stock",
+      "targetPrice": 533.1001,
+      "condition": "below",
+      "initialPrice": 544,
+      "active": true,
+      "frequency": "persistent",
+      "createdAt": "2026-01-01T10:00:00.000Z",
+      "triggered": true,
+      "note": "",
+      "lastEvaluatedPrice": 560.5,
+      "currentPrice": 560.5,
+      "triggeredAt": "2026-09-01T08:03:26.807Z",
+      "triggeredPrice": 533
+    },
+    {
+      "id": "alt-akbnk-2",
+      "code": "AKBNK",
+      "name": "Akbank T.A.S.",
+      "type": "stock",
+      "targetPrice": 64.9901,
+      "condition": "below",
+      "initialPrice": 72,
+      "active": true,
+      "frequency": "persistent",
+      "createdAt": "2026-01-01T10:00:00.000Z",
+      "triggered": false,
+      "note": "Destek seviyesinde kademeli alım fırsatı",
+      "lastEvaluatedPrice": 73.15,
+      "currentPrice": 73.15
+    },
+    {
+      "code": "AKBNK",
+      "name": "Akbank T.A.S.",
+      "type": "stock",
+      "targetPrice": 72.9901,
+      "condition": "below",
+      "initialPrice": 71.95,
+      "lastEvaluatedPrice": 73.15,
+      "currentPrice": 73.15,
+      "active": true,
+      "frequency": "persistent",
+      "note": "",
+      "id": "alt_1788180156856_5j6pm",
+      "createdAt": "2026-08-31T12:42:36.856Z",
+      "triggered": true,
+      "triggeredAt": "2026-08-31T12:56:45.855Z",
+      "triggeredPrice": 72.15
+    }
+  ],
+  "settings": {
+    "recipientEmail": "ykefal@gmail.com",
+    "emailNotificationsEnabled": true,
+    "lastCheckedAt": "2026-09-01T08:26:06.293Z"
+  },
+  "history": [
+    {
+      "id": "th-1788181005855-AKBNK",
+      "alertId": "alt_1788180156856_5j6pm",
+      "code": "AKBNK",
+      "name": "Akbank T.A.S.",
+      "targetPrice": 72.9901,
+      "triggeredPrice": 72.15,
+      "condition": "below",
+      "triggeredAt": "2026-08-31T12:56:45.855Z",
+      "emailSentTo": "ykefal@gmail.com"
+    }
+  ]
+}

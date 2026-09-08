@@ -1,0 +1,6 @@
+{
+  "name": "Borsa ve TEFAS Fon Takip",
+  "description": "Borsa İstanbul hisseleri, TEFAS yatırım fonları, BES emeklilik fonları, vadeli mevduat, kripto ve altın varlıkları için canlı fiyat takibi, çoklu varlık portföy gruplaması, dönemsel kâr/zarar ve yapay zeka analisti.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,94 @@
+{
+  "name": "@firstthumb/tefas-api",
+  "version": "2.0.0",
+  "description": "TypeScript client library for TEFAS (Turkish Electronic Fund Information System) API",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:analyze": "npm run build && npx bundle-analyzer dist/index.js",
+    "build:size": "npm run build && npx size-limit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run tests/integration",
+    "test:unit": "vitest run tests/unit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "prepare": "husky install"
+  },
+  "keywords": [
+    "rest",
+    "api",
+    "client",
+    "http",
+    "fetch",
+    "typescript",
+    "type-safe",
+    "form-urlencoded",
+    "tefas"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chrono-node": "^2.7.6",
+    "simple-statistics": "^7.8.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@size-limit/preset-small-lib": "^11.2.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "@vitest/coverage-v8": "^1.0.0",
+    "@vitest/ui": "^1.0.0",
+    "bundle-analyzer": "^0.0.1",
+    "eslint": "^9.38.0",
+    "happy-dom": "^12.0.0",
+    "husky": "^8.0.0",
+    "size-limit": "^10.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.47.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "size-limit": [
+    {
+      "path": "dist/index.js",
+      "limit": "20 KB"
+    },
+    {
+      "path": "dist/index.cjs",
+      "limit": "50 KB"
+    }
+  ]
+}
