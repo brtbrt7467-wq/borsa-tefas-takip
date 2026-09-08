@@ -20,6 +20,11 @@ import {
   fetchSpreadsheetForRestore, 
   BackupPayload 
 } from './server/sheetsBackupService';
+import { 
+  saveBackupToGitHub, 
+  listGitHubBackups, 
+  getGitHubBackupContent 
+} from './server/githubBackupService';
 import {
   startAlertBackgroundWorker,
   getAlertsData,
@@ -340,6 +345,70 @@ async function startServer() {
     } catch (err: any) {
       console.error('Restore error:', err);
       res.status(500).json({ error: err.message || 'Geri yükleme sırasında bir hata oluştu.' });
+    }
+  });
+
+  // GitHub Backup endpoints
+  app.post('/api/backup/github', async (req, res) => {
+    try {
+      const { payload, token, owner, repo, branch, commitMessage } = req.body || {};
+      if (!payload || !payload.summary || !payload.portfolioItems) {
+        return res.status(400).json({ error: 'Geçersiz portföy yedek verisi.' });
+      }
+
+      const result = await saveBackupToGitHub(payload, {
+        token: token || (req.headers['x-github-token'] as string),
+        owner,
+        repo,
+        branch,
+        commitMessage
+      });
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error('GitHub backup endpoint error:', err);
+      res.status(500).json({ error: err.message || 'GitHub yedekleme hatası.' });
+    }
+  });
+
+  app.get('/api/backup/github/list', async (req, res) => {
+    try {
+      const token = (req.query.token as string) || (req.headers['x-github-token'] as string);
+      const owner = req.query.owner as string;
+      const repo = req.query.repo as string;
+      const branch = (req.query.branch as string) || 'main';
+
+      const result = await listGitHubBackups(token, owner, repo, branch);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: 'GitHub yedekleri listelenemedi.' });
+    }
+  });
+
+  app.post('/api/backup/github/restore', async (req, res) => {
+    try {
+      const { path: filePath, token, owner, repo, branch } = req.body || {};
+      if (!filePath) {
+        return res.status(400).json({ error: 'Dosya yolu (path) gereklidir.' });
+      }
+
+      const result = await getGitHubBackupContent(
+        filePath,
+        token || (req.headers['x-github-token'] as string),
+        owner,
+        repo,
+        branch || 'main'
+      );
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'GitHub yedeği geri yüklenemedi.' });
     }
   });
 

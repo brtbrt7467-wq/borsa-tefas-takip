@@ -142,6 +142,12 @@ export async function createGoogleSheetsBackup(
     if (!createRes.ok) {
       const errText = await createRes.text();
       console.error('[GoogleSheets] Create error:', createRes.status, errText);
+      if (createRes.status === 401 || createRes.status === 403) {
+        return { 
+          success: false, 
+          error: `Google yetkilendirme hatası (${createRes.status}). Seçili hesabın Google Sheets izni yetersiz veya farklı bir hesap seçilmiş olabilir. Lütfen 'Hesap Değiştir' butonuna basarak ykefal@gmail.com ile tekrar oturum açın.` 
+        };
+      }
       return { success: false, error: `Google Sheets oluşturulamadı: ${createRes.status} ${errText}` };
     }
 

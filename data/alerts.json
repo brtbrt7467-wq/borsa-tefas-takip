@@ -7,14 +7,14 @@
       "targetPrice": 7.6501,
       "condition": "below",
       "initialPrice": 8.95,
-      "currentPrice": 8.71,
+      "currentPrice": 8.55,
       "active": true,
       "frequency": "persistent",
       "note": "",
       "id": "alt_1787753739050_f822o",
       "createdAt": "2026-08-26T14:15:39.050Z",
       "triggered": false,
-      "lastEvaluatedPrice": 8.71
+      "lastEvaluatedPrice": 8.55
     },
     {
       "code": "BIMAS",
@@ -23,14 +23,14 @@
       "targetPrice": 370.9701,
       "condition": "below",
       "initialPrice": 419.75,
-      "currentPrice": 492.5,
+      "currentPrice": 417.5,
       "active": true,
       "frequency": "persistent",
       "note": "",
       "id": "alt_1787753640535_v7ans",
       "createdAt": "2026-08-26T14:14:00.535Z",
       "triggered": false,
-      "lastEvaluatedPrice": 492.5
+      "lastEvaluatedPrice": 417.5
     },
     {
       "id": "alt-thyao-1",
@@ -63,8 +63,8 @@
       "createdAt": "2026-01-01T10:00:00.000Z",
       "triggered": false,
       "note": "Destek seviyesinde kademeli alım fırsatı",
-      "lastEvaluatedPrice": 73.15,
-      "currentPrice": 73.15
+      "lastEvaluatedPrice": 72.55,
+      "currentPrice": 72.55
     },
     {
       "code": "AKBNK",
@@ -88,7 +88,7 @@
   "settings": {
     "recipientEmail": "ykefal@gmail.com",
     "emailNotificationsEnabled": true,
-    "lastCheckedAt": "2026-09-01T08:26:06.293Z"
+    "lastCheckedAt": "2026-09-08T12:58:06.192Z"
   },
   "history": [
     {

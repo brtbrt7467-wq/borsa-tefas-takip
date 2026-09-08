@@ -29,6 +29,10 @@ export const auth = authInstance;
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
+provider.setCustomParameters({
+  prompt: 'select_account',
+  login_hint: 'ykefal@gmail.com'
+});
 
 const TOKEN_KEY = 'bist_google_sheets_access_token';
 const TOKEN_TIME_KEY = 'bist_google_sheets_token_timestamp';
@@ -140,8 +144,13 @@ export const initAuth = (
 /**
  * Perform Google Sign-In using Google Identity Services (GSI) Token Client
  * completely bypassing IndexedDB to prevent "Database is closed/hidden" errors.
+ * Forces account selection so the user can explicitly choose ykefal@gmail.com.
  */
-export const googleSignIn = async (): Promise<{ user: any; accessToken: string }> => {
+export const googleSignIn = async (options?: { 
+  forceSelectAccount?: boolean; 
+  loginHint?: string 
+}): Promise<{ user: any; accessToken: string }> => {
+  const targetHint = options?.loginHint || 'ykefal@gmail.com';
   // Method 1: Google Identity Services (GSI) Token Client - zero IndexedDB
   const gClient = (window as any).google?.accounts?.oauth2;
   const clientId = firebaseConfig.oAuthClientId;
@@ -152,6 +161,8 @@ export const googleSignIn = async (): Promise<{ user: any; accessToken: string }
         const tokenClient = gClient.initTokenClient({
           client_id: clientId,
           scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+          prompt: 'select_account',
+          hint: targetHint,
           callback: async (tokenResponse: any) => {
             if (tokenResponse.error) {
               console.error('[GSI] Auth error:', tokenResponse);
@@ -195,26 +206,34 @@ export const googleSignIn = async (): Promise<{ user: any; accessToken: string }
           }
         });
 
-        tokenClient.requestAccessToken({ prompt: '' });
+        tokenClient.requestAccessToken({ 
+          prompt: 'select_account',
+          hint: targetHint
+        });
       } catch (err: any) {
         console.error('[GSI] Exception in token client:', err);
         // Fallback to Firebase Auth
-        fallbackFirebasePopup(resolve, reject);
+        fallbackFirebasePopup(resolve, reject, options);
       }
     });
   }
 
   // Method 2: Fallback to Firebase in-memory popup
   return new Promise((resolve, reject) => {
-    fallbackFirebasePopup(resolve, reject);
+    fallbackFirebasePopup(resolve, reject, options);
   });
 };
 
 async function fallbackFirebasePopup(
   resolve: (val: { user: any; accessToken: string }) => void, 
-  reject: (err: any) => void
+  reject: (err: any) => void,
+  options?: { forceSelectAccount?: boolean; loginHint?: string }
 ) {
   try {
+    provider.setCustomParameters({
+      prompt: 'select_account',
+      login_hint: options?.loginHint || 'ykefal@gmail.com'
+    });
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     
@@ -240,6 +259,11 @@ async function fallbackFirebasePopup(
     }
   }
 }
+
+export const switchGoogleAccount = async (targetEmail: string = 'ykefal@gmail.com'): Promise<{ user: any; accessToken: string }> => {
+  await googleSignOut();
+  return googleSignIn({ forceSelectAccount: true, loginHint: targetEmail });
+};
 
 export const googleSignOut = async () => {
   try {

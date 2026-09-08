@@ -25,11 +25,13 @@ import {
   Clipboard,
   ClipboardCheck,
   Smartphone,
-  Share2
+  Share2,
+  Github,
+  GitBranch
 } from 'lucide-react';
 import { PortfolioItem, Stock, Fund, WatchlistItem, PortfolioCategory, PriceAlert } from '../types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
-import { googleSignIn, getCachedAccessToken, googleSignOut, initAuth, isSafariPWA, isIOSDevice } from '../lib/googleAuth';
+import { googleSignIn, getCachedAccessToken, googleSignOut, initAuth, isSafariPWA, isIOSDevice, switchGoogleAccount } from '../lib/googleAuth';
 import { User } from 'firebase/auth';
 
 interface GoogleSheetsBackupModalProps {
@@ -77,8 +79,22 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
   const [successUrl, setSuccessUrl] = useState<string | null>(null);
   const [backupDate, setBackupDate] = useState<string | null>(null);
 
+  // Backup Destination Selection
+  const [backupDestination, setBackupDestination] = useState<'github' | 'sheets' | 'file'>('github');
+
+  // GitHub backup states
+  const [githubOwner, setGithubOwner] = useState<string>(() => localStorage.getItem('gh_backup_owner') || 'brtbrt7467-wq');
+  const [githubRepo, setGithubRepo] = useState<string>(() => localStorage.getItem('gh_backup_repo') || 'borsa-tefas-takip');
+  const [githubBranch, setGithubBranch] = useState<string>(() => localStorage.getItem('gh_backup_branch') || 'main');
+  const [githubToken, setGithubToken] = useState<string>(() => localStorage.getItem('gh_backup_token') || '');
+  const [showTokenInput, setShowTokenInput] = useState<boolean>(false);
+  const [isGitHubBackingUp, setIsGitHubBackingUp] = useState<boolean>(false);
+  const [githubSuccessData, setGithubSuccessData] = useState<{ fileUrl?: string; commitUrl?: string; fileName?: string } | null>(null);
+  const [githubBackups, setGithubBackups] = useState<Array<{ name: string; path: string; html_url: string; size: number }>>([]);
+  const [isLoadingGitHubFiles, setIsLoadingGitHubFiles] = useState<boolean>(false);
+
   // Restore states
-  const [restoreSubTab, setRestoreSubTab] = useState<'url' | 'paste' | 'file' | 'drive'>('url');
+  const [restoreSubTab, setRestoreSubTab] = useState<'github' | 'url' | 'paste' | 'file' | 'drive'>('github');
   const [driveBackups, setDriveBackups] = useState<DriveBackupFile[]>([]);
   const [isLoadingDriveFiles, setIsLoadingDriveFiles] = useState<boolean>(false);
   const [customSheetUrl, setCustomSheetUrl] = useState<string>('');
@@ -273,14 +289,162 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
     };
   };
 
+  const loadGitHubBackups = async (tokenOverride?: string) => {
+    const tkn = tokenOverride || githubToken;
+    if (!tkn) return;
+    setIsLoadingGitHubFiles(true);
+    try {
+      const res = await fetch(`/api/backup/github/list?owner=${encodeURIComponent(githubOwner)}&repo=${encodeURIComponent(githubRepo)}&branch=${encodeURIComponent(githubBranch)}`, {
+        headers: { 'x-github-token': tkn }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setGithubBackups(data.files || []);
+      }
+    } catch (err) {
+      console.warn('Failed to load GitHub backups:', err);
+    } finally {
+      setIsLoadingGitHubFiles(false);
+    }
+  };
+
+  const handleGitHubBackup = async () => {
+    setErrorMsg(null);
+    setGithubSuccessData(null);
+
+    const tokenToUse = githubToken.trim();
+    if (!tokenToUse) {
+      setShowTokenInput(true);
+      setErrorMsg('GitHub deposuna yazabilmek için lütfen bir Personal Access Token (PAT) girin.');
+      return;
+    }
+
+    setIsGitHubBackingUp(true);
+    setBackupStep('Portföy hazırlanıyor ve GitHub reposuna commit ediliyor...');
+    try {
+      localStorage.setItem('gh_backup_owner', githubOwner);
+      localStorage.setItem('gh_backup_repo', githubRepo);
+      localStorage.setItem('gh_backup_branch', githubBranch);
+      localStorage.setItem('gh_backup_token', tokenToUse);
+
+      const payload = preparePayload();
+      const res = await fetch('/api/backup/github', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-github-token': tokenToUse
+        },
+        body: JSON.stringify({
+          payload,
+          token: tokenToUse,
+          owner: githubOwner.trim(),
+          repo: githubRepo.trim(),
+          branch: githubBranch.trim()
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'GitHub yedeği alınamadı.');
+      }
+
+      setGithubSuccessData({
+        fileUrl: data.fileUrl,
+        commitUrl: data.commitUrl,
+        fileName: data.fileName
+      });
+      setBackupDate(new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Europe/Istanbul' }));
+      setBackupStep('');
+      loadGitHubBackups(tokenToUse);
+    } catch (err: any) {
+      console.error('GitHub backup failed:', err);
+      setErrorMsg(err.message || 'GitHub deposuna yedekleme sırasında bir hata meydana geldi.');
+    } finally {
+      setIsGitHubBackingUp(false);
+      setBackupStep('');
+    }
+  };
+
+  const handleRestoreFromGitHub = async (filePath: string) => {
+    setErrorMsg(null);
+    setRestoreSuccessMsg(null);
+    setIsParsingRestore(true);
+    try {
+      const res = await fetch('/api/backup/github/restore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-github-token': githubToken
+        },
+        body: JSON.stringify({
+          path: filePath,
+          token: githubToken,
+          owner: githubOwner,
+          repo: githubRepo,
+          branch: githubBranch
+        })
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success || !json.data) {
+        throw new Error(json.error || 'GitHub yedeği açılamadı.');
+      }
+
+      const backupData = json.data;
+      if (!backupData.portfolioItems || !Array.isArray(backupData.portfolioItems)) {
+        throw new Error('Geçersiz portföy veri yapısı.');
+      }
+
+      setParsedData({
+        portfolioItems: backupData.portfolioItems,
+        watchlist: backupData.watchlist || [],
+        alerts: backupData.alerts || [],
+        sourceName: `GitHub: ${filePath}`
+      });
+    } catch (err: any) {
+      console.error('GitHub restore error:', err);
+      setErrorMsg(err.message || 'GitHub yedeği geri yüklenemedi.');
+    } finally {
+      setIsParsingRestore(false);
+    }
+  };
+
+  const handleSwitchAccount = async () => {
+    setErrorMsg(null);
+    setIsAuthenticating(true);
+    setBackupStep('Google hesabı değiştiriliyor (ykefal@gmail.com seçebilirsiniz)...');
+    try {
+      const authRes = await switchGoogleAccount('ykefal@gmail.com');
+      setCurrentUser(authRes.user);
+      setAccessToken(authRes.accessToken);
+    } catch (err: any) {
+      console.error('Account switch error:', err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        setErrorMsg('Hesap seçim penceresi kapatıldı.');
+      } else {
+        setErrorMsg(err.message || 'Hesap değiştirilemedi.');
+      }
+    } finally {
+      setIsAuthenticating(false);
+      setBackupStep('');
+    }
+  };
+
   const handleSignInAndBackup = async () => {
     setErrorMsg(null);
     setIsAuthenticating(true);
     try {
       let token = accessToken;
-      if (!token) {
-        setBackupStep('Google hesabı ile yetkilendiriliyor...');
-        const authRes = await googleSignIn();
+      // If user is signed in with another email than ykefal@gmail.com, force switch
+      if (currentUser?.email && currentUser.email.toLowerCase() !== 'ykefal@gmail.com') {
+        setBackupStep('ykefal@gmail.com hesabına geçiş yapılıyor...');
+        const authRes = await switchGoogleAccount('ykefal@gmail.com');
+        setCurrentUser(authRes.user);
+        setAccessToken(authRes.accessToken);
+        token = authRes.accessToken;
+      } else if (!token) {
+        setBackupStep('Google hesabı ile yetkilendiriliyor (ykefal@gmail.com)...');
+        const authRes = await googleSignIn({ forceSelectAccount: true, loginHint: 'ykefal@gmail.com' });
         setCurrentUser(authRes.user);
         setAccessToken(authRes.accessToken);
         token = authRes.accessToken;
@@ -319,6 +483,12 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
 
       const data = await res.json();
       if (!res.ok || !data.success) {
+        if (res.status === 401 || res.status === 403 || data.error?.includes('yetkilendirme') || data.error?.includes('403') || data.error?.includes('401')) {
+          // Invalidate cached token so user is prompted to sign in with correct account
+          await googleSignOut();
+          setCurrentUser(null);
+          setAccessToken(null);
+        }
         throw new Error(data.error || 'Google Sheets yedeği alınamadı.');
       }
 
@@ -860,17 +1030,17 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
       <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* Header */}
-        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent">
+        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-slate-900/5 via-emerald-500/10 to-transparent">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
-              <FileSpreadsheet className="w-6 h-6" />
+            <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white dark:bg-emerald-500/20 dark:text-emerald-400 flex items-center justify-center shrink-0 shadow-xs">
+              <Database className="w-6 h-6" />
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                Google Sheets Portföy Merkezi
+                Portföy Yedekleme & Senkronizasyon
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Portföyünüzü Google E-Tablolar'a yedekleyin veya eski bir yedekten anında geri yükleyin.
+                Portföyünüzü GitHub deponuza commit edin, Google E-Tablolar'a aktarın veya yerel dosya olarak indirin.
               </p>
             </div>
           </div>
@@ -888,19 +1058,24 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
             onClick={() => { setActiveTab('backup'); setErrorMsg(null); setRestoreSuccessMsg(null); }}
             className={`flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-all ${
               activeTab === 'backup'
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900 rounded-t-xl shadow-2xs'
+                ? 'border-slate-900 dark:border-emerald-500 text-slate-900 dark:text-emerald-400 bg-white dark:bg-slate-900 rounded-t-xl shadow-2xs'
                 : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-300'
             }`}
           >
             <Upload className="w-4 h-4" />
-            <span>Yedek Al (Google Sheets'e Aktar)</span>
+            <span>Yedek Al (GitHub / Google / Dosya)</span>
           </button>
 
           <button
-            onClick={() => { setActiveTab('restore'); setErrorMsg(null); setRestoreSuccessMsg(null); }}
+            onClick={() => { 
+              setActiveTab('restore'); 
+              setErrorMsg(null); 
+              setRestoreSuccessMsg(null);
+              if (githubToken) loadGitHubBackups();
+            }}
             className={`flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-all ${
               activeTab === 'restore'
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900 rounded-t-xl shadow-2xs'
+                ? 'border-slate-900 dark:border-emerald-500 text-slate-900 dark:text-emerald-400 bg-white dark:bg-slate-900 rounded-t-xl shadow-2xs'
                 : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-300'
             }`}
           >
@@ -914,7 +1089,11 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
           
           {/* Active User Banner if Signed In */}
           {currentUser && (
-            <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
+            <div className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              currentUser.email?.toLowerCase() === 'ykefal@gmail.com'
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800'
+                : 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700'
+            }`}>
               <div className="flex items-center gap-2.5">
                 {currentUser.photoURL ? (
                   <img src={currentUser.photoURL} alt="Avatar" className="w-8 h-8 rounded-full border border-emerald-300 dark:border-emerald-700" referrerPolicy="no-referrer" />
@@ -924,22 +1103,37 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
                   </div>
                 )}
                 <div>
-                  <div className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                    {currentUser.displayName || 'Google Kullanıcısı'}
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <span>{currentUser.displayName || 'Google Kullanıcısı'}</span>
+                    {currentUser.email?.toLowerCase() === 'ykefal@gmail.com' ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-semibold">ykefal@gmail.com</span>
+                    ) : (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 font-semibold">Farklı Hesap</span>
+                    )}
                   </div>
-                  <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                  <div className="text-[11px] font-medium text-slate-600 dark:text-slate-400">
                     {currentUser.email}
                   </div>
                 </div>
               </div>
-              <button
-                onClick={handleSignOut}
-                title="Hesap Değiştir / Çıkış"
-                className="p-1.5 rounded-lg text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors text-xs flex items-center gap-1 font-semibold"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Çıkış</span>
-              </button>
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  onClick={handleSwitchAccount}
+                  title="ykefal@gmail.com hesabını seç"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold transition-colors flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Hesap Değiştir</span>
+                </button>
+                <button
+                  onClick={handleSignOut}
+                  title="Oturumu Kapat"
+                  className="px-2.5 py-1.5 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-semibold transition-colors flex items-center gap-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Çıkış</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -1031,155 +1225,363 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
                 </div>
               </div>
 
-              {/* Backup Structure Details */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-2.5">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-emerald-500" />
-                  Ayrı Ayrı Oluşturulacak E-Tablo Sayfaları
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-400">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Portföy Özeti:</strong> Genel metrikler & varlık dağılımı</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Hisse Senetleri:</strong> BIST hisseleri, lot, maliyet, kâr</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>TEFAS Fonları:</strong> Yatırım fonları & birim paylar</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>BES Fonları:</strong> Emeklilik plan & BEFAS fonları</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Bono ve Tahviller:</strong> DİBS, devlet & özel sektör tahvilleri</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Eurobond:</strong> USD/EUR cinsi dış borçlanma senetleri</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Altın ve Döviz:</strong> Gram altın, döviz & emtialar</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Kripto Varlıklar:</strong> BTC, ETH & coin pozisyonları</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Mevduat:</strong> Vadeli hesaplar, faiz oranı, vade sonu</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Takip Listesi:</strong> İzleme listesindeki fiyatlar</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span><strong>Fiyat Alarmları:</strong> Kurulu alarmlar ({alerts.length} adet), koşullar, hedefler</span>
-                  </div>
-                </div>
+              {/* Destination Selector Tabs */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => { setBackupDestination('github'); setErrorMsg(null); }}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    backupDestination === 'github'
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Github className="w-4 h-4" />
+                  <span>GitHub Deposu (Önerilen)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setBackupDestination('sheets'); setErrorMsg(null); }}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    backupDestination === 'sheets'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Google Sheets</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setBackupDestination('file'); setErrorMsg(null); }}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    backupDestination === 'file'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Download className="w-4 h-4" />
+                  <span>JSON / CSV</span>
+                </button>
               </div>
 
-              {/* Success State */}
-              {successUrl && (
-                <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-5 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
-                    <CheckCircle2 className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-emerald-800 dark:text-emerald-300">
-                      Google E-Tablo Yedeği Başarıyla Oluşturuldu!
-                    </h3>
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
-                      Yedekleme saati: {backupDate}. Tablonuz Google Drive hesabınızda hazır.
-                    </p>
+              {/* DESTINATION 1: GITHUB REPOSITORY */}
+              {backupDestination === 'github' && (
+                <div className="space-y-4">
+                  {/* Success State for GitHub */}
+                  {githubSuccessData && (
+                    <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-5 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                          <CheckCircle2 className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                            Portföy Yedeği GitHub Deposuna Başarıyla Kaydedildi!
+                          </h3>
+                          <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
+                            Yedekleme saati: {backupDate} (TSİ) • Dosya: <code className="font-mono font-bold">{githubSuccessData.fileName}</code>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex flex-wrap items-center gap-2.5">
+                        {githubSuccessData.fileUrl && (
+                          <a
+                            href={githubSuccessData.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all"
+                          >
+                            <Github className="w-3.5 h-3.5" />
+                            <span>GitHub'da Dosyayı İncele</span>
+                            <ExternalLink className="w-3 h-3 ml-0.5" />
+                          </a>
+                        )}
+
+                        {githubSuccessData.commitUrl && (
+                          <a
+                            href={githubSuccessData.commitUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 text-xs font-semibold transition-all border border-slate-200 dark:border-slate-700"
+                          >
+                            <GitBranch className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Commit Geçmişi</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* GitHub Repo Setup Box */}
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-3.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Github className="w-4 h-4 text-slate-900 dark:text-white" />
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">Hedef GitHub Deposu</span>
+                      </div>
+                      <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-mono font-semibold">
+                        {githubOwner}/{githubRepo} (dal: {githubBranch})
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block mb-1">
+                          Kullanıcı / Organizasyon Adı:
+                        </label>
+                        <input
+                          type="text"
+                          value={githubOwner}
+                          onChange={(e) => setGithubOwner(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-slate-900 dark:text-white"
+                          placeholder="brtbrt7467-wq"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block mb-1">
+                          Depo (Repository) Adı:
+                        </label>
+                        <input
+                          type="text"
+                          value={githubRepo}
+                          onChange={(e) => setGithubRepo(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-slate-900 dark:text-white"
+                          placeholder="borsa-tefas-takip"
+                        />
+                      </div>
+                    </div>
+
+                    {/* GitHub Token Setup */}
+                    <div className="pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <span>GitHub Personal Access Token (PAT):</span>
+                          {githubToken ? (
+                            <span className="text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center gap-0.5">
+                              <CheckCircle2 className="w-3 h-3" /> Token Hazır
+                            </span>
+                          ) : (
+                            <span className="text-rose-500 text-[10px] font-semibold">* Yazma Yetkisi Gerekli</span>
+                          )}
+                        </label>
+                        <a
+                          href="https://github.com/settings/tokens/new?scopes=repo&description=Borsa+Tefas+Takip+Yedekleme"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          <span>Token Oluştur (github.com)</span>
+                        </a>
+                      </div>
+
+                      <div className="relative">
+                        <input
+                          type="password"
+                          value={githubToken}
+                          onChange={(e) => setGithubToken(e.target.value)}
+                          placeholder="ghp_... veya github_pat_..."
+                          className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-slate-800 dark:focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                        🔒 Token'ınız yalnızca tarayıcınızda (localStorage) saklanır ve GitHub API'ye doğrudan deponuza commit göndermek için kullanılır. Token oluştururken <strong>"repo"</strong> veya Fine-grained token ise <strong>"Contents: Read and write"</strong> izni vermeniz yeterlidir.
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-                    <a
-                      href={successUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-md transition-all"
-                    >
-                      <span>Google Sheets'te Aç</span>
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
-
-                    <button
-                      onClick={() => accessToken && executeSheetsBackup(accessToken)}
-                      disabled={isBackingUp}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-sm transition-all border border-slate-200 dark:border-slate-700"
-                    >
-                      {isBackingUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-                      <span>Yeniden Güncelle</span>
-                    </button>
+                  {/* Commit Information Note */}
+                  <div className="p-3 rounded-xl bg-slate-50/70 dark:bg-slate-800/30 border border-slate-200/80 dark:border-slate-700/80 flex items-center gap-2.5 text-xs text-slate-600 dark:text-slate-400">
+                    <GitBranch className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <span>
+                      Yedek dosyanız deponuzda <strong>backups/portfolio-latest.json</strong> ve tarihli anlık görüntü olarak kaydedilecektir.
+                    </span>
                   </div>
-                </div>
-              )}
 
-              {/* Primary Backup Action Button */}
-              {!successUrl && (
-                <div className="space-y-3 pt-2">
+                  {/* GitHub Action Button */}
                   <button
-                    onClick={handleSignInAndBackup}
-                    disabled={isAuthenticating || isBackingUp}
-                    className="w-full flex items-center justify-center gap-3 py-3.5 px-6 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 font-bold text-sm sm:text-base shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                    type="button"
+                    onClick={handleGitHubBackup}
+                    disabled={isGitHubBackingUp}
+                    className="w-full py-3.5 px-6 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
                   >
-                    {isAuthenticating || isBackingUp ? (
+                    {isGitHubBackingUp ? (
                       <>
-                        <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
-                        <span>{backupStep || 'İşlem yapılıyor...'}</span>
+                        <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                        <span>{backupStep || 'GitHub Reposuna Commit Ediliyor...'}</span>
                       </>
                     ) : (
                       <>
-                        <svg className="w-5 h-5" viewBox="0 0 24 24">
-                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                        </svg>
-                        <span>{currentUser ? "Google Sheets'e Yedekle" : "Google ile Bağlan ve Sheets'e Yedekle"}</span>
+                        <Github className="w-4 h-4" />
+                        <span>GitHub Reposuna Yedekle (Commit & Push)</span>
                         <ArrowRight className="w-4 h-4 ml-1" />
                       </>
                     )}
                   </button>
-
-                  <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Google Drive ve E-Tablolar resmi API güvenlik standartları kullanılır.</span>
-                  </div>
                 </div>
               )}
 
-              {/* Alternative Local Downloads (JSON & CSV) */}
-              <div className="border-t border-slate-100 dark:border-slate-800 pt-4 flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500">Alternatif Yerel Yedekleme:</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={downloadLocalCSV}
-                    title="Excel CSV İndir"
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5 border border-slate-200 dark:border-slate-700"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Excel (.csv)</span>
-                  </button>
+              {/* DESTINATION 2: GOOGLE SHEETS */}
+              {backupDestination === 'sheets' && (
+                <div className="space-y-4">
+                  {/* Backup Structure Details */}
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-2.5">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-emerald-500" />
+                      Ayrı Ayrı Oluşturulacak E-Tablo Sayfaları
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>Portföy Özeti:</strong> Genel metrikler & varlık dağılımı</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>Hisse Senetleri:</strong> BIST hisseleri, lot, maliyet, kâr</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>TEFAS Fonları:</strong> Yatırım fonları & birim paylar</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>BES Fonları:</strong> Emeklilik plan & BEFAS fonları</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>Bono ve Tahviller:</strong> DİBS, devlet & özel sektör</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>Altın, Döviz & Kripto:</strong> Altın, döviz, coin pozisyonları</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>Mevduat:</strong> Vadeli hesaplar, faiz oranı, vade sonu</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span><strong>Fiyat Alarmları:</strong> Kurulu alarmlar ({alerts.length} adet)</span>
+                      </div>
+                    </div>
+                  </div>
 
-                  <button
-                    onClick={downloadLocalJSON}
-                    title="JSON Veri İndir"
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5 border border-slate-200 dark:border-slate-700"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>JSON</span>
-                  </button>
+                  {/* Success State for Sheets */}
+                  {successUrl && (
+                    <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-5 text-center space-y-3">
+                      <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
+                        <CheckCircle2 className="w-7 h-7" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-emerald-800 dark:text-emerald-300">
+                          Google E-Tablo Yedeği Başarıyla Oluşturuldu!
+                        </h3>
+                        <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                          Yedekleme saati: {backupDate}. Tablonuz Google Drive hesabınızda hazır.
+                        </p>
+                      </div>
+
+                      <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                        <a
+                          href={successUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-md transition-all"
+                        >
+                          <span>Google Sheets'te Aç</span>
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+
+                        <button
+                          onClick={() => accessToken && executeSheetsBackup(accessToken)}
+                          disabled={isBackingUp}
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-sm transition-all border border-slate-200 dark:border-slate-700"
+                        >
+                          {isBackingUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                          <span>Yeniden Güncelle</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Primary Sheets Backup Action Button */}
+                  {!successUrl && (
+                    <div className="space-y-3 pt-1">
+                      <button
+                        onClick={handleSignInAndBackup}
+                        disabled={isAuthenticating || isBackingUp}
+                        className="w-full flex items-center justify-center gap-3 py-3.5 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm sm:text-base shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isAuthenticating || isBackingUp ? (
+                          <>
+                            <Loader2 className="w-5 h-5 animate-spin text-white" />
+                            <span>{backupStep || 'İşlem yapılıyor...'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileSpreadsheet className="w-5 h-5" />
+                            <span>{currentUser ? "Google Sheets'e Yedekle" : "Google ile Bağlan ve Sheets'e Yedekle"}</span>
+                            <ArrowRight className="w-4 h-4 ml-1" />
+                          </>
+                        )}
+                      </button>
+
+                      <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>Google Drive ve E-Tablolar resmi API güvenlik standartları kullanılır.</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {/* DESTINATION 3: LOCAL DOWNLOADS (JSON & CSV) */}
+              {backupDestination === 'file' && (
+                <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Yerel Dosya Yedekleme (Çevrimdışı İndirme)
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Portföyünüzü, takip listenizi ve fiyat alarmlarınızı bilgisayarınıza veya telefonunuza dosya olarak anında kaydedin.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      onClick={downloadLocalJSON}
+                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 bg-white dark:bg-slate-900 text-left space-y-1.5 transition-all group"
+                    >
+                      <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-bold text-xs">
+                        <FileJson className="w-4 h-4" />
+                        <span>Tam Portföy Yedeği (.json)</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Tüm hisse, fon, BES, mevduat, takip listesi ve alarmlarınızı içeren tam yedek dosyası.
+                      </p>
+                    </button>
+
+                    <button
+                      onClick={downloadLocalCSV}
+                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-emerald-500 bg-white dark:bg-slate-900 text-left space-y-1.5 transition-all group"
+                    >
+                      <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
+                        <FileSpreadsheet className="w-4 h-4" />
+                        <span>Excel Tablosu (.csv)</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Excel veya Numbers programlarında açabileceğiniz tablo formatında varlık listesi.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1385,6 +1787,19 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
                   <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
                     <button
                       type="button"
+                      onClick={() => { setRestoreSubTab('github'); if (githubToken) loadGitHubBackups(); }}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                        restoreSubTab === 'github'
+                          ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-800'
+                      }`}
+                    >
+                      <Github className="w-3.5 h-3.5" />
+                      <span>GitHub</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => setRestoreSubTab('url')}
                       className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
                         restoreSubTab === 'url'
@@ -1435,6 +1850,122 @@ export const GoogleSheetsBackupModal: React.FC<GoogleSheetsBackupModalProps> = (
                       <span>Drive</span>
                     </button>
                   </div>
+
+                  {/* Sub-Tab 0: Restore from GitHub Repository */}
+                  {restoreSubTab === 'github' && (
+                    <div className="space-y-4 p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-800/30 border border-slate-200/80 dark:border-slate-700/80">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                            <Github className="w-3.5 h-3.5" />
+                            <span>GitHub Deposundaki Kayıtlı Yedekler</span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                            {githubOwner}/{githubRepo} (dal: {githubBranch})
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={loadGitHubBackups}
+                          disabled={isLoadingGitHubFiles || !githubToken}
+                          className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center gap-1 transition-colors"
+                        >
+                          <RotateCcw className={`w-3 h-3 ${isLoadingGitHubFiles ? 'animate-spin' : ''}`} />
+                          <span>Yenile</span>
+                        </button>
+                      </div>
+
+                      {!githubToken ? (
+                        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-center space-y-2">
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            GitHub deponuzdaki yedekleri listelemek için lütfen GitHub Token (PAT) girin:
+                          </p>
+                          <div className="max-w-md mx-auto flex gap-2">
+                            <input
+                              type="password"
+                              value={githubToken}
+                              onChange={(e) => setGithubToken(e.target.value)}
+                              placeholder="ghp_... veya github_pat_..."
+                              className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
+                            />
+                            <button
+                              onClick={loadGitHubBackups}
+                              disabled={!githubToken}
+                              className="px-3 py-1.5 rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-xs font-bold disabled:opacity-50"
+                            >
+                              Yedekleri Getir
+                            </button>
+                          </div>
+                        </div>
+                      ) : isLoadingGitHubFiles ? (
+                        <div className="p-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
+                          <span>GitHub deposu taranıyor...</span>
+                        </div>
+                      ) : githubBackups.length > 0 ? (
+                        <div className="space-y-2 max-h-56 overflow-y-auto">
+                          {githubBackups.map((file) => (
+                            <div
+                              key={file.path}
+                              className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 bg-white dark:bg-slate-900 flex items-center justify-between gap-2 transition-colors"
+                            >
+                              <div className="flex items-center gap-2.5 truncate">
+                                <FileJson className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <div className="truncate">
+                                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate flex items-center gap-1.5">
+                                    <span>{file.name}</span>
+                                    {file.name === 'portfolio-latest.json' && (
+                                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-semibold">
+                                        Son Güncel
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                                    <span>Boyut: {Math.round((file.size || 0) / 1024)} KB</span>
+                                    {file.download_url && (
+                                      <a
+                                        href={file.html_url || file.download_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-blue-500 hover:underline flex items-center gap-0.5"
+                                      >
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                        <span>GitHub'da Gör</span>
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRestoreFromGitHub(file.path)}
+                                disabled={isParsingRestore}
+                                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 text-xs font-bold transition-all shrink-0 flex items-center gap-1 shadow-2xs"
+                              >
+                                {isParsingRestore ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                                <span>Geri Yükle</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-6 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            GitHub deponuzun <code>backups/</code> dizininde henüz yedek dosyası bulunamadı.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => { setActiveTab('backup'); setBackupDestination('github'); }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1 transition-colors"
+                          >
+                            <Upload className="w-3 h-3" />
+                            <span>Şimdi GitHub'a Yedek Al</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Sub-Tab 1: Link or ID Restore */}
                   {restoreSubTab === 'url' && (
